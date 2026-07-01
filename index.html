@@ -83,7 +83,7 @@ function resolveScale(){
 }
 // touch
 let lTouchId=null, rTouchId=null;
-let isLactive=false, isRactive=false;
+let lFirstTouch=false, rFirstTouch=false;
 let lTx=0,lTy=0, rTx=0,rTy=0;
 // mouse
 let mPressed=false, mX=0, mY=0;
@@ -156,12 +156,12 @@ function touchMoved(e){
 function touchEnded(e){
   if(!e || !e.changedTouches) return false;
   for(let t of e.changedTouches){
-    if(t.identifier===lTouchId){ lTouchId=null; isLactive=false; }
-    if(t.identifier===rTouchId){ rTouchId=null; isRactive=false; }
+    if(t.identifier===lTouchId){ lTouchId=null; lFirstTouch=false; }
+    if(t.identifier===rTouchId){ rTouchId=null; rFirstTouch=false; }
   }
   return false;
 }
-function touchCanceled(){ lTouchId=null; rTouchId=null; isLactive=false; isRactive=false; }
+function touchCanceled(){ lTouchId=null; rTouchId=null; lFirstTouch=false; rFirstTouch=false; }
 
 function keyPressed(){
   keys[keyCode]=true;
@@ -200,16 +200,14 @@ function spawnEnemy(n){
 function readStick(isL){
   let base=isL?ljBase:rjBase;
   let dx=0,dy=0, touched=false, active=false;
-  let pos=isL?ljPos:rjPos;
 
   // touch
   let tid=isL?lTouchId:rTouchId;
   if(tid!==null){
     let tx=isL?lTx:rTx, ty=isL?lTy:rTy;
-    // first touch this frame? move base to touch point
-    if(!isL && isLactive===false){ rjBase=[tx,ty]; base=rjBase; }
-    else if(isL && !isLactive){ ljBase=[tx,ty]; base=ljBase; }
-    if(isL) isLactive=true; else isRactive=true;
+    // first touch this frame? move base to touch point (while keeping within screen edge)
+    if(isL && !lFirstTouch){ ljBase=[tx,ty]; base=ljBase; lFirstTouch=true; }
+    if(!isL && !rFirstTouch){ rjBase=[tx,ty]; base=rjBase; rFirstTouch=true; }
     dx=tx-base[0]; dy=ty-base[1];
     touched=true;
     active=true;
@@ -217,9 +215,8 @@ function readStick(isL){
   // mouse
   if(!touched && mPressed){
     if((isL && mX<W/2) || (!isL && mX>=W/2)){
-      if(!isL && !isLactive){ rjBase=[mX,mY]; base=rjBase; }
-      else if(isL && !isLactive){ ljBase=[mX,mY]; base=ljBase; }
-      if(isL) isLactive=true; else isRactive=true;
+      if(isL && !lFirstTouch){ ljBase=[mX,mY]; base=ljBase; lFirstTouch=true; }
+      if(!isL && !rFirstTouch){ rjBase=[mX,mY]; base=rjBase; rFirstTouch=true; }
       dx=mX-base[0]; dy=mY-base[1];
       touched=true;
       active=true;
@@ -239,7 +236,7 @@ function readStick(isL){
   }
 
   if(!active){
-    if(isL) isLactive=false; else isRactive=false;
+    if(isL) lFirstTouch=false; else rFirstTouch=false;
     if(isL) ljPos=[...ljBase]; else rjPos=[...rjBase];
     return {x:0, y:0, mag:0};
   }
