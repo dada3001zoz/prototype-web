@@ -27,13 +27,13 @@ const C={
   VISION_MASK_ALPHA:130,
   AIM_HOLD_TIME:1,
   TURN_SPEED_MOVE:6, TURN_SPEED_AIM:18,
-  SPEED_NORMAL:150, SPEED_AIMING:120, SPEED_SHOOTING:80,
+  SPEED_NORMAL:200, SPEED_AIMING:160, SPEED_SHOOTING:120,
   JOY_RADIUS_FACTOR:0.22,  // 攻击摇杆加大，方便手机触屏
   STICK_RADIUS_FACTOR:0.07,
   FIRE_THRESHOLD:0.8, AIM_DEAD_ZONE:0.1,
   MAX_ENEMIES:8, ENEMY_SPAWN_CHANCE:0.02,
   ENEMY_SPAWN_MIN_FACTOR:0.6, ENEMY_SPAWN_MAX_FACTOR:0.9,
-  ENEMY_SPEED:20, ENEMY_RADIUS_FACTOR:0.027,
+  ENEMY_SPEED:80, ENEMY_RADIUS_FACTOR:0.027,
   ENEMY_HP:4,
   HIT_RADIUS_FACTOR:0.033,
   HIT_FLASH_TIME:0.1, KNOCKBACK:10,
@@ -83,6 +83,7 @@ function resolveScale(){
 }
 // touch
 let lTouchId=null, rTouchId=null;
+let isLactive=false, isRactive=false;
 let lTx=0,lTy=0, rTx=0,rTy=0;
 // mouse
 let mPressed=false, mX=0, mY=0;
@@ -155,12 +156,12 @@ function touchMoved(e){
 function touchEnded(e){
   if(!e || !e.changedTouches) return false;
   for(let t of e.changedTouches){
-    if(t.identifier===lTouchId){ lTouchId=null; }
-    if(t.identifier===rTouchId){ rTouchId=null; }
+    if(t.identifier===lTouchId){ lTouchId=null; isLactive=false; }
+    if(t.identifier===rTouchId){ rTouchId=null; isRactive=false; }
   }
   return false;
 }
-function touchCanceled(){ lTouchId=null; rTouchId=null; }
+function touchCanceled(){ lTouchId=null; rTouchId=null; isLactive=false; isRactive=false; }
 
 function keyPressed(){
   keys[keyCode]=true;
@@ -198,23 +199,33 @@ function spawnEnemy(n){
 // ---------- READ STICK ----------
 function readStick(isL){
   let base=isL?ljBase:rjBase;
-  let dx=0,dy=0, touched=false;
+  let dx=0,dy=0, touched=false, active=false;
+  let pos=isL?ljPos:rjPos;
 
   // touch
   let tid=isL?lTouchId:rTouchId;
   if(tid!==null){
     let tx=isL?lTx:rTx, ty=isL?lTy:rTy;
+    // first touch this frame? move base to touch point
+    if(!isL && isLactive===false){ rjBase=[tx,ty]; base=rjBase; }
+    else if(isL && !isLactive){ ljBase=[tx,ty]; base=ljBase; }
+    if(isL) isLactive=true; else isRactive=true;
     dx=tx-base[0]; dy=ty-base[1];
     touched=true;
+    active=true;
   }
   // mouse
   if(!touched && mPressed){
     if((isL && mX<W/2) || (!isL && mX>=W/2)){
+      if(!isL && !isLactive){ rjBase=[mX,mY]; base=rjBase; }
+      else if(isL && !isLactive){ ljBase=[mX,mY]; base=ljBase; }
+      if(isL) isLactive=true; else isRactive=true;
       dx=mX-base[0]; dy=mY-base[1];
       touched=true;
+      active=true;
     }
   }
-  // keyboard
+  // keyboard - keep original base position
   if(!touched){
     let kx=0,ky=0;
     if(isL){
@@ -224,7 +235,13 @@ function readStick(isL){
       if(keys[39]) kx=1; if(keys[37]) kx=-1;
       if(keys[40]) ky=1; if(keys[38]) ky=-1;
     }
-    if(kx||ky){ dx=kx*_joyR; dy=ky*_joyR; }
+    if(kx||ky){ dx=kx*_joyR; dy=ky*_joyR; active=true; }
+  }
+
+  if(!active){
+    if(isL) isLactive=false; else isRactive=false;
+    if(isL) ljPos=[...ljBase]; else rjPos=[...rjBase];
+    return {x:0, y:0, mag:0};
   }
 
   let d=sqrt(dx*dx+dy*dy);
