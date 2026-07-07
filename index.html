@@ -24,7 +24,7 @@ const C={
   VISION_MASK_ALPHA:80,
   AIM_HOLD_TIME:1,
   TURN_SPEED_MOVE:6, TURN_SPEED_AIM:18,
-  SPEED_NORMAL:140, SPEED_AIMING:112, SPEED_SHOOTING:84,
+  SPEED_NORMAL:100, SPEED_AIMING:80, SPEED_SHOOTING:60,
   JOY_RADIUS_FACTOR:0.22, STICK_RADIUS_FACTOR:0.07,
   FIRE_THRESHOLD:0.8, AIM_DEAD_ZONE:0.1,
   MAX_ENEMIES:8, ENEMY_SPAWN_CHANCE:0.02,
@@ -101,14 +101,6 @@ function buildFloorTexture(){
       g.rect(gx, gy, cw, ch);
     }
   }
-  // border wall
-  g.strokeWeight(6);
-  g.stroke(200,60,60);
-  g.noFill();
-  g.rect(0,0,MAP_W,MAP_H);
-  g.strokeWeight(3);
-  g.stroke(160,40,40);
-  g.rect(6,6,MAP_W-12,MAP_H-12);
 }
 
 function setup(){
