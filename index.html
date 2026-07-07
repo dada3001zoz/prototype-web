@@ -251,9 +251,6 @@ function draw(){
     let spd=shooting?C.SPEED_SHOOTING:(aiming?C.SPEED_AIMING:C.SPEED_NORMAL);
     worldX+=sL.x*spd*dt;
     worldY+=sL.y*spd*dt;
-    // clamp to map bounds - keep player within map
-    worldX=clamp(worldX, W/2, MAP_W-W/2);
-    worldY=clamp(worldY, H/2, MAP_H-H/2);
   }
 
   // -- ANGLE --
