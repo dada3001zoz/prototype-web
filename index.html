@@ -19,58 +19,62 @@ p5.disableFriendlyErrors=true;
 // CONFIG
 // ============================================================
 const C={
-  PLAYER_RADIUS:0.025,    // relative to canvas height
-  PLAYER_MARGIN:0.03,     // relative to canvas height
-  VISION_RADIUS_FACTOR:1.2, // times canvas diagonal
-  VISION_SPREAD:Math.PI/3,
-  CIRCLE_VISION_RADIUS_FACTOR:0.17, // relative to canvas height
+  PLAYER_RADIUS:0.025, VISION_SPREAD:Math.PI/3,
+  CIRCLE_VISION_RADIUS_FACTOR:0.17,
   VISION_MASK_ALPHA:130,
   AIM_HOLD_TIME:1,
   TURN_SPEED_MOVE:6, TURN_SPEED_AIM:18,
-  SPEED_NORMAL:200, SPEED_AIMING:160, SPEED_SHOOTING:120,
-  JOY_RADIUS_FACTOR:0.22,  // 攻击摇杆加大，方便手机触屏
-  STICK_RADIUS_FACTOR:0.07,
+  SPEED_NORMAL:140, SPEED_AIMING:112, SPEED_SHOOTING:84,
+  JOY_RADIUS_FACTOR:0.22, STICK_RADIUS_FACTOR:0.07,
   FIRE_THRESHOLD:0.8, AIM_DEAD_ZONE:0.1,
   MAX_ENEMIES:8, ENEMY_SPAWN_CHANCE:0.02,
-  ENEMY_SPAWN_MIN_FACTOR:0.6, ENEMY_SPAWN_MAX_FACTOR:0.9,
-  ENEMY_SPEED:80, ENEMY_RADIUS_FACTOR:0.027,
-  ENEMY_HP:4,
+  ENEMY_SPAWN_MIN_FACTOR:2, ENEMY_SPAWN_MAX_FACTOR:4,
+  ENEMY_SPEED:80, ENEMY_RADIUS_FACTOR:0.027, ENEMY_HP:4,
   HIT_RADIUS_FACTOR:0.033,
   HIT_FLASH_TIME:0.1, KNOCKBACK:10,
   FIRE_RATE:0.1, BULLET_SPEED_FACTOR:1.3,
   BULLET_SPAWN_OFFSET_FACTOR:0.03,
   BULLET_SPREAD:0.08, BULLET_TRAIL_TIME:0.02,
   DROP_DURATION:0.72, DROP_GRAVITY:1389, DROP_VELOCITY:500,
+  // world map
+  MAP_WIDTH_FACTOR:6,   // map width = MAP_WIDTH_FACTOR * canvas height
+  MAP_HEIGHT_FACTOR:6,  // map height = MAP_HEIGHT_FACTOR * canvas height
+  GRID_SIZE_FACTOR:0.2, // grid cell = GRID_SIZE_FACTOR * canvas height
 };
 const COL={
-  WORLD:[42,46,52],
+  WORLD:[42,46,52], FLOOR:[30,34,40], FLOOR_ALT:[34,38,44],
+  GRID_LINE:[45,50,56],
   PLAYER:[50,150,255],
-  AIM_YELLOW:[255,200,50],
-  FIRE_RED:[255,50,50],
+  AIM_YELLOW:[255,200,50], FIRE_RED:[255,50,50],
   BULLET:[255,255,100],
-  ENEMY:[200,50,50],
-  HIT_FLASH:[255,255,255],
-  HP:[0,255,0],
-  WHITE:[255,255,255],
+  ENEMY:[200,50,50], HIT_FLASH:[255,255,255],
+  HP:[0,255,0], WHITE:[255,255,255],
   LEFT_STICK:[200,200,200],
-  JOY_BORDER:[100,100,100],
-  JOY_IDLE:[150,150,150],
+  JOY_BORDER:[100,100,100], JOY_IDLE:[150,150,150],
 };
 
 // ============================================================
 // STATE
 // ============================================================
-let px, py, curAngle, tarAngle, aimTimer, fireCD;
+let W, H, _playerR, _visionR, _circleVR, _joyR, _stickR, _enemyR, _hitR, _bulletSpd, _bulletOff, _enemySpawnMin, _enemySpawnMax;
+let MAP_W, MAP_H, GRID_SIZE;
+// world coords
+let worldX=0, worldY=0;
+let curAngle, tarAngle, aimTimer, fireCD;
 let bullets=[], enemies=[], drops=[];
-let ljBase, rjBase;
-let ljPos, rjPos;
-let W, H;  // actual canvas size
-// resolved scale-dependent sizes
-let _playerR, _margin, _visionR, _circleVR, _joyR, _stickR, _enemyR, _hitR, _bulletSpd, _bulletOff, _enemySpawnMin, _enemySpawnMax;
+// touch
+let ljBase, rjBase, ljPos, rjPos;
+let lTouchId=null, rTouchId=null, lFirstTouch=false, rFirstTouch=false;
+let lTx=0,lTy=0, rTx=0,rTy=0;
+let mPressed=false, mX=0, mY=0;
+const keys={};
+let pgMask=null;
+// floor grid pattern (pre-drawn for performance)
+let floorGfx=null;
 
 function resolveScale(){
   _playerR=C.PLAYER_RADIUS*H;
-  _visionR=C.VISION_RADIUS_FACTOR*Math.sqrt(W*W+H*H);
+  _visionR=Math.sqrt(W*W+H*H)*1.2;
   _circleVR=C.CIRCLE_VISION_RADIUS_FACTOR*H;
   _joyR=C.JOY_RADIUS_FACTOR*H;
   _stickR=C.STICK_RADIUS_FACTOR*H;
@@ -80,21 +84,33 @@ function resolveScale(){
   _bulletOff=C.BULLET_SPAWN_OFFSET_FACTOR*H;
   _enemySpawnMin=C.ENEMY_SPAWN_MIN_FACTOR*H;
   _enemySpawnMax=C.ENEMY_SPAWN_MAX_FACTOR*H;
+  MAP_W=C.MAP_WIDTH_FACTOR*H;
+  MAP_H=C.MAP_HEIGHT_FACTOR*H;
+  GRID_SIZE=C.GRID_SIZE_FACTOR*H;
 }
-// touch
-let lTouchId=null, rTouchId=null;
-let lFirstTouch=false, rFirstTouch=false;
-let lTx=0,lTy=0, rTx=0,rTy=0;
-// mouse
-let mPressed=false, mX=0, mY=0;
-// keyboard
-const keys={};
-// pg
-let pgMask=null;
 
-// ============================================================
-// p5
-// ============================================================
+function buildFloorTexture(){
+  floorGfx=createGraphics(ceil(MAP_W), ceil(MAP_H));
+  let g=floorGfx;
+  let cw=ceil(GRID_SIZE), ch=ceil(GRID_SIZE);
+  for(let gy=0; gy<MAP_H; gy+=ch){
+    for(let gx=0; gx<MAP_W; gx+=cw){
+      let isAlt=((Math.floor(gy/ch)+Math.floor(gx/cw))%2===0);
+      g.fill(isAlt?COL.FLOOR:COL.FLOOR_ALT);
+      g.noStroke();
+      g.rect(gx, gy, cw, ch);
+    }
+  }
+  // border wall
+  g.strokeWeight(6);
+  g.stroke(200,60,60);
+  g.noFill();
+  g.rect(0,0,MAP_W,MAP_H);
+  g.strokeWeight(3);
+  g.stroke(160,40,40);
+  g.rect(6,6,MAP_W-12,MAP_H-12);
+}
+
 function setup(){
   W=windowWidth; H=windowHeight;
   resolveScale();
@@ -102,6 +118,7 @@ function setup(){
   pixelDensity(1);
   frameRate(60);
   pgMask=createGraphics(W, H);
+  buildFloorTexture();
   resetGame();
   for(let i=0;i<5;i++) spawnEnemy();
 }
@@ -111,42 +128,35 @@ function windowResized(){
   resolveScale();
   resizeCanvas(W, H);
   pgMask=createGraphics(W, H);
+  buildFloorTexture();
   resetGame();
 }
 
 function resetGame(){
-  px=W/2; py=H/2;
+  worldX=MAP_W/2; worldY=MAP_H/2;
   curAngle=0; tarAngle=0; aimTimer=0; fireCD=0;
   bullets=[]; enemies=[]; drops=[];
-  ljBase=[W*0.14, H*0.82];
-  rjBase=[W*0.86, H*0.82];
+  ljBase=[W*0.14, H*0.82]; rjBase=[W*0.86, H*0.82];
   ljPos=[...ljBase]; rjPos=[...rjBase];
 }
 
 // ---------- INPUT ----------
-function mousePressed(){
-  mPressed=true; mX=mouseX; mY=mouseY;
-  // click simulates touch for quick test
-  return false;
-}
+function mousePressed(){ mPressed=true; mX=mouseX; mY=mouseY; return false; }
 function mouseReleased(){ mPressed=false; }
 function mouseMoved(){ mX=mouseX; mY=mouseY; }
 function mouseDragged(){ mX=mouseX; mY=mouseY; return false; }
 
 function touchStarted(e){
-  if(!e || !e.changedTouches) return false;
+  if(!e||!e.changedTouches) return false;
   for(let t of e.changedTouches){
     let tx=t.clientX, ty=t.clientY;
-    if(tx<W/2 && lTouchId===null){
-      lTouchId=t.identifier; lTx=tx; lTy=ty;
-    } else if(tx>=W/2 && rTouchId===null){
-      rTouchId=t.identifier; rTx=tx; rTy=ty;
-    }
+    if(tx<W/2 && lTouchId===null){ lTouchId=t.identifier; lTx=tx; lTy=ty; }
+    else if(tx>=W/2 && rTouchId===null){ rTouchId=t.identifier; rTx=tx; rTy=ty; }
   }
   return false;
 }
 function touchMoved(e){
-  if(!e || !e.changedTouches) return false;
+  if(!e||!e.changedTouches) return false;
   for(let t of e.changedTouches){
     if(t.identifier===lTouchId){ lTx=t.clientX; lTy=t.clientY; }
     if(t.identifier===rTouchId){ rTx=t.clientX; rTy=t.clientY; }
@@ -154,7 +164,7 @@ function touchMoved(e){
   return false;
 }
 function touchEnded(e){
-  if(!e || !e.changedTouches) return false;
+  if(!e||!e.changedTouches) return false;
   for(let t of e.changedTouches){
     if(t.identifier===lTouchId){ lTouchId=null; lFirstTouch=false; }
     if(t.identifier===rTouchId){ rTouchId=null; rFirstTouch=false; }
@@ -172,18 +182,16 @@ function keyPressed(){
 function keyReleased(){ keys[keyCode]=false; }
 
 // ---------- HELPERS ----------
-function lerpAngle(c, t, s){
-  let d=(t-c)%TAU;
-  if(d>PI) d-=TAU; else if(d<-PI) d+=TAU;
-  return c+d*s;
-}
+function lerpAngle(c,t,s){ let d=(t-c)%TAU; if(d>PI)d-=TAU;else if(d<-PI)d+=TAU; return c+d*s; }
 function clamp(v,lo,hi){ return Math.max(lo, Math.min(hi, v)); }
+function w2s(x,y){ return [W/2+(x-worldX), H/2+(y-worldY)]; }
 
 function isInVision(tx,ty){
-  let d=dist(px,py,tx,ty);
+  let [sx,sy]=w2s(tx,ty);
+  let d=dist(W/2,H/2,sx,sy);
   if(d<=_circleVR) return true;
   if(d>_visionR) return false;
-  let a=atan2(ty-py, tx-px);
+  let a=atan2(sy-H/2,sx-W/2);
   let diff=(a-curAngle+PI)%TAU-PI;
   return abs(diff)<=C.VISION_SPREAD/2;
 }
@@ -192,7 +200,7 @@ function spawnEnemy(n){
   for(let i=0;i<(n||1);i++){
     let a=random(TAU);
     let d=random(_enemySpawnMin, _enemySpawnMax);
-    enemies.push({x:px+cos(a)*d, y:py+sin(a)*d, hp:C.ENEMY_HP, hitFlash:0});
+    enemies.push({wx:worldX+cos(a)*d, wy:worldY+sin(a)*d, hp:C.ENEMY_HP, hitFlash:0});
   }
 }
 
@@ -200,55 +208,37 @@ function spawnEnemy(n){
 function readStick(isL){
   let base=isL?ljBase:rjBase;
   let dx=0,dy=0, touched=false, active=false;
-
-  // touch
   let tid=isL?lTouchId:rTouchId;
   if(tid!==null){
     let tx=isL?lTx:rTx, ty=isL?lTy:rTy;
-    // first touch this frame? move base to touch point (while keeping within screen edge)
     if(isL && !lFirstTouch){ ljBase=[tx,ty]; base=ljBase; lFirstTouch=true; }
     if(!isL && !rFirstTouch){ rjBase=[tx,ty]; base=rjBase; rFirstTouch=true; }
-    dx=tx-base[0]; dy=ty-base[1];
-    touched=true;
-    active=true;
+    dx=tx-base[0]; dy=ty-base[1]; touched=true; active=true;
   }
-  // mouse
   if(!touched && mPressed){
     if((isL && mX<W/2) || (!isL && mX>=W/2)){
       if(isL && !lFirstTouch){ ljBase=[mX,mY]; base=ljBase; lFirstTouch=true; }
       if(!isL && !rFirstTouch){ rjBase=[mX,mY]; base=rjBase; rFirstTouch=true; }
-      dx=mX-base[0]; dy=mY-base[1];
-      touched=true;
-      active=true;
+      dx=mX-base[0]; dy=mY-base[1]; touched=true; active=true;
     }
   }
-  // keyboard - keep original base position
   if(!touched){
     let kx=0,ky=0;
-    if(isL){
-      if(keys[68]) kx=1; if(keys[65]) kx=-1;
-      if(keys[83]) ky=1; if(keys[87]) ky=-1;
-    } else {
-      if(keys[39]) kx=1; if(keys[37]) kx=-1;
-      if(keys[40]) ky=1; if(keys[38]) ky=-1;
-    }
+    if(isL){ if(keys[68])kx=1;if(keys[65])kx=-1;if(keys[83])ky=1;if(keys[87])ky=-1; }
+    else { if(keys[39])kx=1;if(keys[37])kx=-1;if(keys[40])ky=1;if(keys[38])ky=-1; }
     if(kx||ky){ dx=kx*_joyR; dy=ky*_joyR; active=true; }
   }
-
   if(!active){
     if(isL) lFirstTouch=false; else rFirstTouch=false;
     if(isL) ljPos=[...ljBase]; else rjPos=[...rjBase];
-    return {x:0, y:0, mag:0};
+    return {x:0,y:0,mag:0};
   }
-
   let d=sqrt(dx*dx+dy*dy);
-  let mag=min(d/_joyR, 1);
+  let mag=min(d/_joyR,1);
   if(d>_joyR){ dx=dx/d*_joyR; dy=dy/d*_joyR; }
   let ndx=d?dx/d:0, ndy=d?dy/d:0;
-
   if(isL) ljPos=[base[0]+dx, base[1]+dy];
   else rjPos=[base[0]+dx, base[1]+dy];
-
   return {x:ndx, y:ndy, mag};
 }
 
@@ -258,29 +248,26 @@ function readStick(isL){
 function draw(){
   let dt=min(1/frameRate(), 0.05);
 
-  // -- INPUT --
   let sL=readStick(true);
   let sR=readStick(false);
   let moving=sL.mag>0;
   let aiming=sR.mag>C.AIM_DEAD_ZONE;
   let shooting=sR.mag>=C.FIRE_THRESHOLD;
 
-  // -- MOVE --
+  // -- MOVE WORLD (player at screen center) --
   if(moving){
     let spd=shooting?C.SPEED_SHOOTING:(aiming?C.SPEED_AIMING:C.SPEED_NORMAL);
-    px+=sL.x*spd*dt;
-    py+=sL.y*spd*dt;
-    px=clamp(px, 0, W);
-    py=clamp(py, 0, H);
+    worldX+=sL.x*spd*dt;
+    worldY+=sL.y*spd*dt;
+    // clamp to map bounds - keep player within map
+    worldX=clamp(worldX, W/2, MAP_W-W/2);
+    worldY=clamp(worldY, H/2, MAP_H-H/2);
   }
 
   // -- ANGLE --
   let tSpd=C.TURN_SPEED_MOVE;
   if(aiming){ tarAngle=atan2(sR.y,sR.x); aimTimer=C.AIM_HOLD_TIME; tSpd=C.TURN_SPEED_AIM; }
-  else {
-    if(aimTimer>0) aimTimer-=dt;
-    else if(moving) tarAngle=atan2(sL.y,sL.x);
-  }
+  else { if(aimTimer>0) aimTimer-=dt; else if(moving) tarAngle=atan2(sL.y,sL.x); }
   curAngle=lerpAngle(curAngle,tarAngle,tSpd*dt);
 
   // -- SHOOT --
@@ -289,174 +276,158 @@ function draw(){
     if(fireCD<=0){
       fireCD=C.FIRE_RATE;
       let a=curAngle+random(-C.BULLET_SPREAD,C.BULLET_SPREAD);
-      bullets.push({
-        x:px+cos(a)*_bulletOff, y:py+sin(a)*_bulletOff,
-        vx:cos(a)*_bulletSpd, vy:sin(a)*_bulletSpd,
-      });
+      bullets.push({wx:worldX+cos(a)*_bulletOff, wy:worldY+sin(a)*_bulletOff,
+                     vx:cos(a)*_bulletSpd, vy:sin(a)*_bulletSpd});
     }
   } else fireCD=0;
 
-  // -- BULLETS --
+  // -- BULLETS (world coords) --
   for(let i=bullets.length-1;i>=0;i--){
-    let b=bullets[i]; b.x+=b.vx*dt; b.y+=b.vy*dt;
-    if(b.x<0||b.x>W||b.y<0||b.y>H) bullets.splice(i,1);
+    let b=bullets[i]; b.wx+=b.vx*dt; b.wy+=b.vy*dt;
+    if(b.wx<0||b.wx>MAP_W||b.wy<0||b.wy>MAP_H) bullets.splice(i,1);
   }
 
   // -- SPAWN --
   if(enemies.length<C.MAX_ENEMIES && random()<C.ENEMY_SPAWN_CHANCE) spawnEnemy();
 
-  // -- ENEMIES --
+  // -- ENEMIES (world coords) --
   for(let ei=enemies.length-1;ei>=0;ei--){
     let e=enemies[ei];
-    let a=atan2(py-e.y, px-e.x);
-    e.x+=cos(a)*C.ENEMY_SPEED*dt; e.y+=sin(a)*C.ENEMY_SPEED*dt;
+    let a=atan2(worldY-e.wy, worldX-e.wx);
+    e.wx+=cos(a)*C.ENEMY_SPEED*dt; e.wy+=sin(a)*C.ENEMY_SPEED*dt;
+    e.wx=clamp(e.wx, _enemyR, MAP_W-_enemyR);
+    e.wy=clamp(e.wy, _enemyR, MAP_H-_enemyR);
     if(e.hitFlash>0) e.hitFlash-=dt;
-
     for(let bi=bullets.length-1;bi>=0;bi--){
       let b=bullets[bi];
-      if(sq(b.x-e.x)+sq(b.y-e.y) < sq(_hitR)){
+      if(sq(b.wx-e.wx)+sq(b.wy-e.wy)<sq(_hitR)){
         bullets.splice(bi,1);
         e.hp--; e.hitFlash=C.HIT_FLASH_TIME;
-        e.x+=cos(curAngle)*C.KNOCKBACK; e.y+=sin(curAngle)*C.KNOCKBACK;
-        if(e.hp<=0){
-          drops.push({x:e.x, y:e.y, t:0});
-          enemies.splice(ei,1);
-        }
+        e.wx+=cos(curAngle)*C.KNOCKBACK; e.wy+=sin(curAngle)*C.KNOCKBACK;
+        if(e.hp<=0){ drops.push({wx:e.wx, wy:e.wy, t:0}); enemies.splice(ei,1); }
         break;
       }
     }
   }
 
   // -- DROPS --
-  for(let di=drops.length-1;di>=0;di--){
-    drops[di].t+=dt;
-    if(drops[di].t>=C.DROP_DURATION) drops.splice(di,1);
-  }
+  for(let di=drops.length-1;di>=0;di--){ drops[di].t+=dt; if(drops[di].t>=C.DROP_DURATION) drops.splice(di,1); }
 
   // ============================================================
   // RENDER
   // ============================================================
-  background(COL.WORLD[0], COL.WORLD[1], COL.WORLD[2]);
+  background(COL.WORLD);
 
-  // ---------- VISION MASK ----------
+  // --- FLOOR ---
+  let ox=(worldX-W/2), oy=(worldY-H/2);
+  // visible region of floor
+  let sx=clamp(ox,0,MAP_W-W), sy=clamp(oy,0,MAP_H-H);
+  image(floorGfx, -ox, -oy);
+
+  // --- VISION MASK ---
   pgMask.clear();
-  pgMask.noStroke();
-  pgMask.fill(255);
+  pgMask.noStroke(); pgMask.fill(255);
   pgMask.beginShape();
-  pgMask.vertex(px,py);
+  pgMask.vertex(W/2,H/2);
   for(let i=0;i<=20;i++){
-    let off=-C.VISION_SPREAD/2 + C.VISION_SPREAD*i/20;
+    let off=-C.VISION_SPREAD/2+C.VISION_SPREAD*i/20;
     let ra=curAngle+off;
-    pgMask.vertex(px+cos(ra)*_visionR, py+sin(ra)*_visionR);
+    pgMask.vertex(W/2+cos(ra)*_visionR, H/2+sin(ra)*_visionR);
   }
   pgMask.endShape(CLOSE);
-  pgMask.ellipse(px, py, _circleVR*2, _circleVR*2);
-
-  // blend mask onto canvas: darken outside, leave visible areas untouched
-  // We draw a fullscreen dark overlay on main canvas, then use the mask to restore it.
-  // Actually, simpler: composite the mask via blendMode(SUBTRACT) on the dark overlay.
-  // p5 doesn't expose SUBTRACT; use drawingContext directly.
+  pgMask.ellipse(W/2, H/2, _circleVR*2, _circleVR*2);
   let ctx=drawingContext;
-  // save current composite
   ctx.save();
-
-  // 1) draw dark overlay over everything
   ctx.globalAlpha=C.VISION_MASK_ALPHA/255;
   ctx.fillStyle='black';
   ctx.fillRect(0,0,W,H);
   ctx.globalAlpha=1;
-
-  // 2) erase dark overlay where mask is white
   ctx.globalCompositeOperation='destination-out';
-  // draw the mask content onto the main canvas
-  ctx.drawImage(pgMask.elt, 0, 0);
+  ctx.drawImage(pgMask.elt,0,0);
   ctx.restore();
 
-  // ---------- DROP ITEMS ----------
+  // --- DROPS ---
   noStroke();
   for(let d of drops){
+    let [sx,sy]=w2s(d.wx,d.wy);
     let t=min(d.t, C.DROP_DURATION);
-    let h=C.DROP_VELOCITY*t - 0.5*C.DROP_GRAVITY*t*t;
-    let dy=d.y-max(0,h);
-    fill(80,220,255); circle(d.x, dy, 16);
-    fill(80,220,255,80); circle(d.x, dy+6, 8);
+    let h=C.DROP_VELOCITY*t-0.5*C.DROP_GRAVITY*t*t;
+    let dy=sy-max(0,h);
+    fill(80,220,255); circle(sx,dy,16);
+    fill(80,220,255,80); circle(sx,dy+6,8);
   }
 
-  // ---------- AIM LINE ----------
+  // --- AIM LINE ---
   if(aiming){
     stroke(shooting?COL.FIRE_RED:COL.AIM_YELLOW);
     strokeWeight(shooting?2:1);
-    line(px, py, px+cos(curAngle)*_visionR, py+sin(curAngle)*_visionR);
+    line(W/2,H/2, W/2+cos(curAngle)*_visionR, H/2+sin(curAngle)*_visionR);
     noStroke();
   }
 
-  // ---------- BULLETS ----------
+  // --- BULLETS (world coords → screen) ---
   for(let b of bullets){
+    let [sx,sy]=w2s(b.wx,b.wy);
     stroke(COL.BULLET);
     strokeWeight(3);
-    line(b.x, b.y, b.x-b.vx*C.BULLET_TRAIL_TIME, b.y-b.vy*C.BULLET_TRAIL_TIME);
+    line(sx,sy, sx-b.vx*C.BULLET_TRAIL_TIME, sy-b.vy*C.BULLET_TRAIL_TIME);
     noStroke();
   }
 
-  // ---------- ENEMIES ----------
+  // --- ENEMIES ---
   for(let e of enemies){
-    if(!isInVision(e.x,e.y)) continue;
+    if(!isInVision(e.wx,e.wy)) continue;
+    let [sx,sy]=w2s(e.wx,e.wy);
     let c=e.hitFlash>0?COL.HIT_FLASH:COL.ENEMY;
     fill(c); noStroke();
-    circle(e.x, e.y, _enemyR*2);
+    circle(sx,sy,_enemyR*2);
     fill(COL.HP);
-    rect(e.x-10, e.y-25, 20*(e.hp/C.ENEMY_HP), 4);
+    rect(sx-10,sy-25,20*(e.hp/C.ENEMY_HP),4);
   }
 
-  // ---------- PLAYER ----------
+  // --- PLAYER (fixed center) ---
   if(aiming){
     let ac=shooting?COL.FIRE_RED:COL.AIM_YELLOW;
     noFill(); stroke(ac);
     strokeWeight(shooting?4:2);
-    circle(px, py, (_playerR+6+12*sR.mag)*2);
+    circle(W/2,H/2,(_playerR+6+12*sR.mag)*2);
   }
   noStroke();
   fill(COL.PLAYER);
-  circle(px, py, _playerR*2);
+  circle(W/2,H/2,_playerR*2);
 
   // aim progress bar
   if(aiming){
-    let bw=70, bh=7;
-    let bx=px-bw/2, by=py-_playerR-22;
+    let bw=70,bh=7;
+    let bx=W/2-bw/2, by=H/2-_playerR-22;
     let fw=bw*sR.mag;
     fill(30,30,30,180); noStroke(); rect(bx-1,by-1,bw+2,bh+2,4);
-    noFill(); stroke(COL.JOY_BORDER); strokeWeight(1); rect(bx,by,bw,bh,3);
-    noStroke();
+    noFill(); stroke(COL.JOY_BORDER); strokeWeight(1); rect(bx,by,bw,bh,3); noStroke();
     if(fw>0){ fill(shooting?COL.FIRE_RED:COL.AIM_YELLOW); rect(bx,by,fw,bh,3); }
     stroke(COL.FIRE_RED); strokeWeight(2);
-    line(bx+bw*C.FIRE_THRESHOLD, by-3, bx+bw*C.FIRE_THRESHOLD, by+bh+3);
+    line(bx+bw*C.FIRE_THRESHOLD,by-3, bx+bw*C.FIRE_THRESHOLD,by+bh+3);
     noStroke();
   }
 
-  // ---------- JOYSTICKS ----------
-  // left
+  // --- JOYSTICKS ---
   noFill(); stroke(COL.WHITE); strokeWeight(2);
-  circle(ljBase[0], ljBase[1], _joyR*2);
+  circle(ljBase[0],ljBase[1],_joyR*2);
   fill(COL.LEFT_STICK); noStroke();
-  circle(ljPos[0], ljPos[1], _stickR*2);
+  circle(ljPos[0],ljPos[1],_stickR*2);
 
-  // right
   let jCol=shooting?COL.FIRE_RED:(aiming?COL.AIM_YELLOW:COL.JOY_IDLE);
   noFill(); stroke(COL.JOY_BORDER); strokeWeight(2);
-  circle(rjBase[0], rjBase[1], _joyR*2);
+  circle(rjBase[0],rjBase[1],_joyR*2);
   noFill(); stroke(COL.FIRE_RED[0],COL.FIRE_RED[1],COL.FIRE_RED[2],150); strokeWeight(1);
-  circle(rjBase[0], rjBase[1], _joyR*C.FIRE_THRESHOLD*2);
-  // tension line
+  circle(rjBase[0],rjBase[1],_joyR*C.FIRE_THRESHOLD*2);
   if(aiming){ stroke(jCol); strokeWeight(3); line(rjBase[0],rjBase[1],rjPos[0],rjPos[1]); }
-  // knob
   fill(jCol); noStroke();
-  circle(rjPos[0], rjPos[1], _stickR*2);
-  // force text
+  circle(rjPos[0],rjPos[1],_stickR*2);
   fill(shooting?COL.FIRE_RED:COL.WHITE);
   textAlign(CENTER); textSize(14);
   text(`Force: ${int(sR.mag*100)}%`, rjBase[0], rjBase[1]+_joyR+20);
 
-  // ---------- HUD hint ----------
+  // --- HUD ---
   fill(COL.WHITE); textAlign(LEFT); textSize(14);
   text("左半屏=移动  右半屏=瞄准/射击", 10, 20);
   text("键盘: WASD=移动  方向键=瞄准  R=重置  S=截图", 10, 40);
